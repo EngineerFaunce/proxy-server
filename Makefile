@@ -2,8 +2,6 @@
 # make			# compiles source files
 # make clean	# removes compiled files
 
-#CFLAGS = -std=c99 -g
-
 all:
 	@echo "Compiling server code..."
 	$(CC) proxy.c -o proxy -lpthread

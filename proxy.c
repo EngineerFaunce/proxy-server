@@ -9,19 +9,19 @@
 #include <netdb.h>
 #include <errno.h>
 
-#define SERVER_IP       "172.25.42.71"
+#define SERVER_IP       "1.1.1.1"
 #define PORT            10059
 
-int i = 0;
 pthread_t thread_id[15];
 pthread_mutex_t lock;
 void *Handle_Comm(void *);
 char client_message[20000];
-int send_size, recv_size;
+int send_size, recv_size, i = 0;
+FILE *fp;
 
 int main(int argc , char *argv[])
 {
-    int server_sock, client_sock, read_size;
+    int server_sock, client_sock;
     struct sockaddr_in server, client;
     socklen_t sock_len = sizeof(struct sockaddr_in);
 
@@ -33,6 +33,11 @@ int main(int argc , char *argv[])
 
     /* Zeroing sockaddr_in structs */
     memset(&server, 0, sizeof(server));
+
+    /* Open log file */
+    fp = fopen("Proxy.log", "w");
+    fseek(fp, 0, SEEK_SET);
+    printf("Log file opened.\n");
 
     /* Create sockets */
     server_sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -77,27 +82,35 @@ int main(int argc , char *argv[])
         i += 1;
         if(i == 15)
             i = 0;
-    }    
+    }
+    fclose(fp);
 }
 
 void *Handle_Comm(void *sock) 
 { 
     int client_sock = *((int *)sock);
-    int sent_bytes, serv_recv_size;
+    int serv_recv_size;
 
     pthread_mutex_lock(&lock);
 
+    /* Receive message from browser client */
     recv_size = recv(client_sock, client_message, 1024, 0);
     printf("Received %d bytes. Msg is:\n\n%s\n\n", recv_size, client_message);
+
+    fwrite(client_message, recv_size, 1, fp);
+    fwrite("\n\r", 2, 1, fp);
+    printf("Logged message contents to log file.\n");
 
     /* Determine the request type */
     char request_type[20], resource[200], http[20], host[50];
     sscanf(client_message, "%s %s %s %*s %s", request_type, resource, http, host);
 
     /* Debugging purposes */
+    printf("========== HTTP Message Info ==========\n");
     printf("Request type: %s\n", request_type);
     printf("Path of resource requested: %s\n", resource);
-    printf("Host: %s\n\n", host);
+    printf("Host: %s\n", host);
+    printf("=======================================\n\n");
 
     /* If the request is anything other than a GET request, exit the thread */
     if(strcmp(request_type, "GET") != 0)
@@ -106,9 +119,7 @@ void *Handle_Comm(void *sock)
     }
     else
     {
-        char message[100000];
-        struct sockaddr_in sa;
-
+        char message[1000000];
         /*
          * Code adapted from Beej's Guide to Network Programming
          * http://beej.us/guide/bgnet/html/
@@ -153,16 +164,17 @@ void *Handle_Comm(void *sock)
 
         /* Send message to origin server */
         sprintf(message, "GET %s %s\r\nHost: %s\r\n\r\n", resource, http, host);
-        sent_bytes = send(server_sock, message, strlen(message), 0);
-        printf("[Thread] Sent %d bytes to server\n", sent_bytes);
+        send_size = send(server_sock, message, strlen(message), 0);
+        printf("[Thread] Sent %d bytes to server\n", send_size);
 
         /* Receive message from origin server */
         serv_recv_size = recv(server_sock, message, sizeof(message), MSG_WAITALL);
-        printf("[Thread] Received %d bytes from server\n", serv_recv_size);
+        printf("[Thread] Received %d bytes from server ", serv_recv_size);
         printf("Message from server is: \n\n%s\n", message);
 
         /* Send message from origin server back to client */
-        sent_bytes = send(client_sock, message, sizeof(message), MSG_WAITALL);
+        send_size = send(client_sock, message, serv_recv_size, MSG_WAITALL);
+        printf("[Thread] Sent %d bytes back to browser client.\n\n", send_size);
 
         freeaddrinfo(servinfo);
     }
