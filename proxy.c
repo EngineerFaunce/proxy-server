@@ -8,7 +8,7 @@
 #include <netdb.h>
 #include <errno.h>
 
-#define SERVER_IP       "172.21.229.15"
+#define SERVER_IP       "172.25.42.71"
 #define PORT            10059
 
 int i = 0;
@@ -76,22 +76,26 @@ void *Handle_Comm(void *sock)
 { 
     int client_sock = *((int *)sock);
     int server_sock = socket(AF_INET, SOCK_STREAM, 0);
-    recv_size = recv(client_sock, client_message, 2048, 0);
+    recv_size = recv(client_sock, client_message, 1024, 0);
     printf("Received %d bytes. Msg is:\n\n%s\n\n", recv_size, client_message);
 
     /* Determine the request type */
-    char *request_type = strtok(client_message, " ");
+    char request_type[20], item[200], host[50];
+    sscanf(client_message, "%s %s %*s %*s %s", request_type, item, host);
+
     printf("Request type: %s\n", request_type);
+    printf("Path of resource requested: %s\n", item);
+    printf("Host: %s\n", host);
+    
 
     /* If the request is anything other than a GET request, exit the thread */
     if(strcmp(request_type, "GET") != 0)
     {
-        printf("Not a GET request. Thread exiting!\n");
+        printf("Not a GET request. Thread exiting!\n\n");
         pthread_exit((void *)2);
     }
     else
     {
-        char *origin_server = strtok(client_message, " ");
 
         /*
          * TODO:
