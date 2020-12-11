@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>    	
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <arpa/inet.h> 	
 #include <unistd.h> 
 #include <pthread.h>   
@@ -13,23 +14,30 @@
 
 int i = 0;
 pthread_t thread_id[15];
+pthread_mutex_t lock;
 void *Handle_Comm(void *);
 char client_message[20000];
 int send_size, recv_size;
 
 int main(int argc , char *argv[])
 {
-    int socket_desc, client_sock, read_size;
+    int server_sock, client_sock, read_size;
     struct sockaddr_in server, client;
     socklen_t sock_len = sizeof(struct sockaddr_in);
+
+    /* Initialize mutex */
+    if (pthread_mutex_init(&lock, NULL) != 0) { 
+        perror("Mutex init has failed"); 
+        exit(EXIT_FAILURE);
+    }
 
     /* Zeroing sockaddr_in structs */
     memset(&server, 0, sizeof(server));
 
     /* Create sockets */
-    socket_desc = socket(AF_INET, SOCK_STREAM, 0);
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
     client_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_desc < 0 || client_sock < 0)
+    if (server_sock < 0 || client_sock < 0)
     {
         perror("Error creating socket");
         exit(EXIT_FAILURE);
@@ -42,7 +50,7 @@ int main(int argc , char *argv[])
     inet_pton(AF_INET, SERVER_IP, &(server.sin_addr)) ;
 
     /* Binds socket to port number */
-    if(bind(socket_desc, (struct sockaddr *)&server, sizeof(server)) < 0)
+    if(bind(server_sock, (struct sockaddr *)&server, sizeof(server)) < 0)
     {
         perror("Bind failed. Error");
         exit(EXIT_FAILURE);
@@ -51,13 +59,13 @@ int main(int argc , char *argv[])
 
     /* Server socket enters listening mode */
     printf("Server listening on port %d\n", PORT);
-    listen(socket_desc, 15);
+    listen(server_sock, 15);
 
     while(1)
     {
         printf("Waiting for incoming connections...\n\n");
         
-        client_sock = accept(socket_desc, (struct sockaddr *)&client, (socklen_t*)&sock_len);
+        client_sock = accept(server_sock, (struct sockaddr *)&client, (socklen_t*)&sock_len);
         if (client_sock < 0)
         {
             perror("accept failed");
@@ -75,36 +83,89 @@ int main(int argc , char *argv[])
 void *Handle_Comm(void *sock) 
 { 
     int client_sock = *((int *)sock);
-    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    int sent_bytes, serv_recv_size;
+
+    pthread_mutex_lock(&lock);
+
     recv_size = recv(client_sock, client_message, 1024, 0);
     printf("Received %d bytes. Msg is:\n\n%s\n\n", recv_size, client_message);
 
     /* Determine the request type */
-    char request_type[20], item[200], host[50];
-    sscanf(client_message, "%s %s %*s %*s %s", request_type, item, host);
+    char request_type[20], resource[200], http[20], host[50];
+    sscanf(client_message, "%s %s %s %*s %s", request_type, resource, http, host);
 
+    /* Debugging purposes */
     printf("Request type: %s\n", request_type);
-    printf("Path of resource requested: %s\n", item);
-    printf("Host: %s\n", host);
-    
+    printf("Path of resource requested: %s\n", resource);
+    printf("Host: %s\n\n", host);
 
     /* If the request is anything other than a GET request, exit the thread */
     if(strcmp(request_type, "GET") != 0)
     {
         printf("Not a GET request. Thread exiting!\n\n");
-        pthread_exit((void *)2);
     }
     else
     {
+        char message[100000];
+        struct sockaddr_in sa;
 
         /*
-         * TODO:
-         * 1. make a connection to origin server using TCP
-         * 2. make new GET request and send to origin server (get addr info function?)
-         * 3. send back to browser
+         * Code adapted from Beej's Guide to Network Programming
+         * http://beej.us/guide/bgnet/html/
+         * 
+         * Using getaddrinfo() streamlines a lot of the setup we have
+         * been doing manually this semester, so I decided to use it
+         * here, but also keep the rest of my program similar to how
+         * we've been doing it.
          */
+        struct addrinfo hints, *servinfo;
+        int server_sock, status;
 
-        //sprintf(client_message, "GET %s HTTP/1.1\r\n\r\n", origin_server);
-        //send_size = send(*((int *)socket), client_message, 64, 0);
+        /* Zeroing hints struct */
+        memset(&hints, 0, sizeof hints);
+
+        /* Specify IPv4 and TCP socket type */
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        if((status = getaddrinfo(host, "80", &hints, &servinfo)) != 0)
+        {
+            perror("getaddrinfo() error");
+            exit(EXIT_FAILURE);
+        }
+
+        /* Create new socket */
+        server_sock = socket(servinfo->ai_family, servinfo->ai_socktype, 0);
+        if(server_sock < 0)
+        {
+            perror("[Thread] Error creating socket");
+            exit(EXIT_FAILURE);
+        }
+        printf("[Thread] Socket created successfully\n");
+
+        /* Make a connection to origin server */
+        if (connect(server_sock, servinfo->ai_addr, servinfo->ai_addrlen) < 0)
+        {
+            perror("[Thread] Connect error") ;
+            exit(EXIT_FAILURE);
+        }
+        printf("[Thread] Connected to origin server.\n");
+
+        /* Send message to origin server */
+        sprintf(message, "GET %s %s\r\nHost: %s\r\n\r\n", resource, http, host);
+        sent_bytes = send(server_sock, message, strlen(message), 0);
+        printf("[Thread] Sent %d bytes to server\n", sent_bytes);
+
+        /* Receive message from origin server */
+        serv_recv_size = recv(server_sock, message, sizeof(message), MSG_WAITALL);
+        printf("[Thread] Received %d bytes from server\n", serv_recv_size);
+        printf("Message from server is: \n\n%s\n", message);
+
+        /* Send message from origin server back to client */
+        sent_bytes = send(client_sock, message, sizeof(message), MSG_WAITALL);
+
+        freeaddrinfo(servinfo);
     }
+    pthread_mutex_unlock(&lock);
+    pthread_exit((void *)0);
 }
