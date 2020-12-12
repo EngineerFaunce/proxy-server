@@ -120,14 +120,10 @@ void *Handle_Comm(void *sock)
     else
     {
         char message[1000000];
+        
         /*
          * Code adapted from Beej's Guide to Network Programming
          * http://beej.us/guide/bgnet/html/
-         * 
-         * Using getaddrinfo() streamlines a lot of the setup we have
-         * been doing manually this semester, so I decided to use it
-         * here, but also keep the rest of my program similar to how
-         * we've been doing it.
          */
         struct addrinfo hints, *servinfo;
         int server_sock, status;
